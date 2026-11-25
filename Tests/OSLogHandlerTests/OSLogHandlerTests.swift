@@ -36,48 +36,6 @@ struct OSLogHandlerTests {
         #expect(OSLogHandler.osLogType(for: .critical) == .fault)
     }
 
-    // MARK: - Partition (deny-by-default)
-
-    @Test
-    @available(macOS 11.0, iOS 14.0, tvOS 14.0, watchOS 7.0, *)
-    func partitionKeepsOnlyExplicitlyPublicValuesPublic() {
-        let (publicString, privateString) = OSLogHandler.partition([
-            "method": .attributed("GET", attributes: [Sensitivity.public]),
-            "user_id": .attributed("u-123", attributes: [Sensitivity.sensitive]),
-            "client_ip": "203.0.113.5",  // untagged, so private
-        ])
-
-        #expect(publicString == "method=GET")
-        // Sorted by key: client_ip before user_id.
-        #expect(privateString == "client_ip=203.0.113.5 user_id=u-123")
-    }
-
-    @Test
-    @available(macOS 11.0, iOS 14.0, tvOS 14.0, watchOS 7.0, *)
-    func partitionSortsEachSideByKey() {
-        let (publicString, privateString) = OSLogHandler.partition([
-            "b": .attributed("2", attributes: [Sensitivity.public]),
-            "a": .attributed("1", attributes: [Sensitivity.public]),
-            "z": .attributed("26", attributes: [Sensitivity.sensitive]),
-            "y": .attributed("25", attributes: [Sensitivity.sensitive]),
-        ])
-
-        #expect(publicString == "a=1 b=2")
-        #expect(privateString == "y=25 z=26")
-    }
-
-    @Test
-    @available(macOS 11.0, iOS 14.0, tvOS 14.0, watchOS 7.0, *)
-    func partitionRoutesAllToPrivateWhenNothingIsPublic() {
-        let (publicString, privateString) = OSLogHandler.partition([
-            "a": "1",
-            "b": .attributed("2", attributes: [Sensitivity.sensitive]),
-        ])
-
-        #expect(publicString.isEmpty)
-        #expect(privateString == "a=1 b=2")
-    }
-
     // MARK: - Metadata merging
 
     @Test
@@ -168,7 +126,7 @@ struct OSLogHandlerTests {
         #expect(emission["error.type"]?.description.hasSuffix("SampleError") == true)
 
         // Untagged error fields stay private under deny-by-default.
-        let (publicString, _) = OSLogHandler.partition(emission)
+        let (publicString, _) = PartitionedMetadata.partition(emission)
         #expect(publicString.isEmpty)
     }
 
@@ -192,64 +150,6 @@ struct OSLogHandlerTests {
         // The event's own error.message is kept. The injected one does not overwrite it.
         let emission = try #require(handler.emissionTimeMetadata(for: event))
         #expect(emission["error.message"]?.description == "custom")
-    }
-
-    @Test
-    @available(macOS 11.0, iOS 14.0, tvOS 14.0, watchOS 7.0, *)
-    func emissionOverlapsBaseDetectsSharedKeys() {
-        var handler = OSLogHandler(subsystem: "test", category: "overlap")
-        handler.metadata = [
-            "a": "base_a",  // private side
-            "b": .attributed("base_b", attributes: [Sensitivity.public]),  // public side
-        ]
-
-        #expect(handler.emissionOverlapsBase(["a": "x"]))  // shares a private-side key
-        #expect(handler.emissionOverlapsBase(["b": "x"]))  // shares a public-side key
-        #expect(handler.emissionOverlapsBase(["c": "x", "a": "y"]))  // any shared key
-        #expect(!handler.emissionOverlapsBase(["c": "x", "d": "y"]))  // disjoint
-    }
-
-    // MARK: - Base metadata: split by sensitivity, cached, reconstructed
-
-    @Test
-    @available(macOS 11.0, iOS 14.0, tvOS 14.0, watchOS 7.0, *)
-    func baseMetadataSplitsBySensitivityAndReconstructs() {
-        var handler = OSLogHandler(subsystem: "test", category: "base")
-
-        // A fresh handler has empty halves and empty cached strings.
-        #expect(handler.publicBaseString.isEmpty)
-        #expect(handler.privateBaseString.isEmpty)
-
-        handler.metadata = [
-            "method": .attributed("GET", attributes: [Sensitivity.public]),
-            "client_ip": "203.0.113.5",  // untagged, so private
-        ]
-
-        // Split by sensitivity into the two halves.
-        #expect(handler.publicBaseMetadata["method"]?.description == "GET")
-        #expect(handler.privateBaseMetadata["client_ip"]?.description == "203.0.113.5")
-        #expect(handler.publicBaseMetadata["client_ip"] == nil)
-        #expect(handler.privateBaseMetadata["method"] == nil)
-
-        // Cached strings match a flatten of each half.
-        #expect(handler.publicBaseString == "method=GET")
-        #expect(handler.privateBaseString == "client_ip=203.0.113.5")
-
-        // The getter reconstructs the whole dictionary from the two halves.
-        #expect(handler.metadata["method"]?.description == "GET")
-        #expect(handler.metadata["client_ip"]?.description == "203.0.113.5")
-        #expect(handler.metadata.count == 2)
-
-        // The subscript routes to the correct half and keeps the cached string in sync.
-        handler[metadataKey: "user_id"] = .attributed("u-1", attributes: [Sensitivity.sensitive])
-        #expect(handler.privateBaseMetadata["user_id"]?.description == "u-1")
-        #expect(handler.privateBaseString == "client_ip=203.0.113.5 user_id=u-1")
-
-        // Value semantics: a copy updates its own halves independently.
-        var copy = handler
-        copy[metadataKey: "method"] = nil
-        #expect(handler.publicBaseString == "method=GET")
-        #expect(copy.publicBaseString.isEmpty)
     }
 
     // MARK: - Value semantics (LogHandler requirement)

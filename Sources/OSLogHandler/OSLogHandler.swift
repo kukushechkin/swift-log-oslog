@@ -49,38 +49,15 @@ public struct OSLogHandler: LogHandler {
     /// report which levels the system has enabled.
     internal let osLog: OSLog
 
-    /// Base metadata, split by ``Sensitivity`` ahead of time. This avoids repartitioning on every log.
-    /// ``Sensitivity/public`` entries are stored in ``publicBaseMetadata``. Everything else is in
-    /// ``privateBaseMetadata``.
-    @usableFromInline package var publicBaseMetadata: Logging.Logger.Metadata = [:]
-    @usableFromInline package var privateBaseMetadata: Logging.Logger.Metadata = [:]
-
-    /// Caches a `key=value` flattening of each base half. Recomputes only when the base metadata changes.
-    @usableFromInline package var publicBaseString: String = ""
-    @usableFromInline package var privateBaseString: String = ""
+    /// The base metadata, split by ``Sensitivity`` ahead of time with the `key=value` text of each half cached.
+    @usableFromInline package var base = PartitionedMetadata()
 
     /// Base metadata as one dictionary.
     ///
     /// Reunites the two halves. The setter re-splits and re-flattens them.
     public var metadata: Logging.Logger.Metadata {
-        get {
-            if self.privateBaseMetadata.isEmpty { return self.publicBaseMetadata }
-            if self.publicBaseMetadata.isEmpty { return self.privateBaseMetadata }
-            return self.publicBaseMetadata.merging(self.privateBaseMetadata) { keep, _ in keep }
-        }
-        set {
-            self.publicBaseMetadata = [:]
-            self.privateBaseMetadata = [:]
-            for (key, value) in newValue {
-                if value.attributes[Sensitivity.self] == .public {
-                    self.publicBaseMetadata[key] = value
-                } else {
-                    self.privateBaseMetadata[key] = value
-                }
-            }
-            self.publicBaseString = Self.flatten(self.publicBaseMetadata)
-            self.privateBaseString = Self.flatten(self.privateBaseMetadata)
-        }
+        get { self.base.metadata }
+        set { self.base.metadata = newValue }
     }
 
     /// Supplies metadata to attach to every log message, resolved fresh at emission time.
@@ -130,23 +107,23 @@ public struct OSLogHandler: LogHandler {
         let publicString: String
         let privateString: String
         if let emission = self.emissionTimeMetadata(for: event) {
-            if self.emissionOverlapsBase(emission) {
+            if self.base.overlapsBase(emission) {
                 // Rare: emission-time key collides with a base key. Merge the two, where emission-time
                 // metadata wins on conflicts, then partition the result.
-                var merged = self.publicBaseMetadata
-                merged.merge(self.privateBaseMetadata) { keep, _ in keep }
+                var merged = self.base.publicBaseMetadata
+                merged.merge(self.base.privateBaseMetadata) { keep, _ in keep }
                 merged.merge(emission) { _, emitted in emitted }
-                (publicString, privateString) = Self.partition(merged)
+                (publicString, privateString) = PartitionedMetadata.partition(merged)
             } else {
                 // Common: no collision. Partition just the emission-time metadata and append to the cached
                 // base.
-                let (emittedPublic, emittedPrivate) = Self.partition(emission)
-                publicString = Self.appending(emittedPublic, to: self.publicBaseString)
-                privateString = Self.appending(emittedPrivate, to: self.privateBaseString)
+                let (emittedPublic, emittedPrivate) = PartitionedMetadata.partition(emission)
+                publicString = PartitionedMetadata.appending(emittedPublic, to: self.base.publicBaseString)
+                privateString = PartitionedMetadata.appending(emittedPrivate, to: self.base.privateBaseString)
             }
         } else {
             // No emission-time metadata: use the cached base partition directly.
-            (publicString, privateString) = (self.publicBaseString, self.privateBaseString)
+            (publicString, privateString) = (self.base.publicBaseString, self.base.privateBaseString)
         }
 
         switch (publicString.isEmpty, privateString.isEmpty) {
@@ -175,20 +152,8 @@ public struct OSLogHandler: LogHandler {
     /// A read checks both the public and private partitions. A write puts the new value into a
     /// partition based on its ``Sensitivity``; setting `nil` removes the key from both partitions.
     public subscript(metadataKey key: String) -> Logging.Logger.Metadata.Value? {
-        get { self.publicBaseMetadata[key] ?? self.privateBaseMetadata[key] }
-        set {
-            self.publicBaseMetadata[key] = nil
-            self.privateBaseMetadata[key] = nil
-            if let newValue {
-                if newValue.attributes[Sensitivity.self] == .public {
-                    self.publicBaseMetadata[key] = newValue
-                } else {
-                    self.privateBaseMetadata[key] = newValue
-                }
-            }
-            self.publicBaseString = Self.flatten(self.publicBaseMetadata)
-            self.privateBaseString = Self.flatten(self.privateBaseMetadata)
-        }
+        get { self.base[key] }
+        set { self.base[key] = newValue }
     }
 
     // MARK: - Pure helpers (package access for testing)
@@ -218,62 +183,6 @@ public struct OSLogHandler: LogHandler {
             }
         }
         return metadata.isEmpty ? nil : metadata
-    }
-
-    /// Whether an emission-time key also names a base entry. Appending would duplicate that key in this
-    /// case.
-    @usableFromInline
-    package func emissionOverlapsBase(_ emission: Logging.Logger.Metadata) -> Bool {
-        for key in emission.keys where self.publicBaseMetadata[key] != nil || self.privateBaseMetadata[key] != nil {
-            return true
-        }
-        return false
-    }
-
-    /// Flattens already-split metadata into a sorted `key=value` string.
-    package static func flatten(_ metadata: Logging.Logger.Metadata) -> String {
-        var result = ""
-        result.reserveCapacity(metadata.keys.reduce(0) { $0 + $1.utf8.count + 2 } + metadata.count)
-        for (key, value) in metadata.sorted(by: { $0.key < $1.key }) {
-            if !result.isEmpty { result.append(" ") }
-            result.append(key)
-            result.append("=")
-            result.append(value.description)
-        }
-        return result
-    }
-
-    /// Appends `field` to `base`, separated by a space. Skips the copy when either side is empty.
-    @usableFromInline
-    package static func appending(_ field: String, to base: String) -> String {
-        if field.isEmpty { return base }
-        if base.isEmpty { return field }
-        return base + " " + field
-    }
-
-    /// Splits metadata into sorted public/private `key=value` strings in one pass. Denies by default: only
-    /// ``Sensitivity/public`` goes to the public string.
-    @usableFromInline
-    package static func partition(
-        _ metadata: Logging.Logger.Metadata
-    ) -> (publicString: String, privateString: String) {
-        var publicString = ""
-        var privateString = ""
-        for (key, value) in metadata.sorted(by: { $0.key < $1.key }) {
-            let isPublic = value.attributes[Sensitivity.self] == .public
-            if isPublic {
-                if !publicString.isEmpty { publicString.append(" ") }
-                publicString.append(key)
-                publicString.append("=")
-                publicString.append(value.description)
-            } else {
-                if !privateString.isEmpty { privateString.append(" ") }
-                privateString.append(key)
-                privateString.append("=")
-                privateString.append(value.description)
-            }
-        }
-        return (publicString, privateString)
     }
 
     /// Maps a swift-log level to the closest `OSLogType`. OSLog has five levels for swift-log's seven:
