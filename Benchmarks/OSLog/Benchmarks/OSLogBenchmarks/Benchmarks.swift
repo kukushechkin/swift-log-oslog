@@ -41,4 +41,5 @@ public let benchmarks: @Sendable () -> Void = {
     )
     pureBenchmarks(configuration: configuration)
     bridgeBenchmarks(configuration: configuration)
+    bridgeBenchmarks(configuration: configuration, json: true)
 }

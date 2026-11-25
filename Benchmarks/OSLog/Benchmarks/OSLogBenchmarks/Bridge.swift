@@ -27,8 +27,17 @@ import SensitivityAttribute
 /// - Parameters:
 ///   - category: The category of the handler and the label of the logger.
 ///   - base: The base metadata of the handler.
-private func makeBridgeLogger(category: String, base: Logger.Metadata = [:]) -> Logger {
-    var handler = OSLogHandler(subsystem: "com.example.applelogbench", category: category)
+///   - json: Whether the handler uses the `.json` metadata format.
+private func makeBridgeLogger(
+    category: String,
+    base: Logger.Metadata = [:],
+    json: Bool
+) -> Logger {
+    var handler = OSLogHandler(
+        subsystem: "com.example.applelogbench",
+        category: category,
+        metadataFormat: json ? .json : .keyValue
+    )
     for (key, value) in base {
         handler[metadataKey: key] = value
     }
@@ -39,19 +48,24 @@ private func makeBridgeLogger(category: String, base: Logger.Metadata = [:]) -> 
 
 /// Registers the benchmarks that log through swift-log and `OSLogHandler`.
 ///
-/// - Parameter configuration: The measurement settings shared by all benchmarks.
-func bridgeBenchmarks(configuration: Benchmark.Configuration) {
+/// - Parameters:
+///   - configuration: The measurement settings shared by all benchmarks.
+///   - json: Whether the handler uses the `.json` metadata format. The names of the benchmarks then start with
+///     `json_`.
+func bridgeBenchmarks(configuration: Benchmark.Configuration, json: Bool = false) {
+    let prefix = json ? "json_" : ""
+    let suffix = json ? "-json" : ""
     // A constant message and no metadata.
-    let noMetadata = makeBridgeLogger(category: "bridge-nometa")
-    Benchmark("bridge_no_metadata", configuration: configuration) { benchmark in
+    let noMetadata = makeBridgeLogger(category: "bridge-nometa\(suffix)", json: json)
+    Benchmark("\(prefix)bridge_no_metadata", configuration: configuration) { benchmark in
         for _ in benchmark.scaledIterations {
             noMetadata.info("req")
         }
     }
 
     // One field passed at each log call.
-    let emissionTime = makeBridgeLogger(category: "bridge-emission")
-    Benchmark("bridge_emission_time_metadata", configuration: configuration) { benchmark in
+    let emissionTime = makeBridgeLogger(category: "bridge-emission\(suffix)", json: json)
+    Benchmark("\(prefix)bridge_emission_time_metadata", configuration: configuration) { benchmark in
         for _ in benchmark.scaledIterations {
             emissionTime.info("req", metadata: ["id": "\(42, sensitivity: .public)"])
         }
@@ -59,8 +73,12 @@ func bridgeBenchmarks(configuration: Benchmark.Configuration) {
 
     // The same field, set once on the handler as base metadata. The log calls pass no metadata.
     let baseMetadata: Logger.Metadata = ["id": "\(42, sensitivity: .public)"]
-    let withBaseMetadata = makeBridgeLogger(category: "bridge-base", base: baseMetadata)
-    Benchmark("bridge_base_metadata", configuration: configuration) { benchmark in
+    let withBaseMetadata = makeBridgeLogger(
+        category: "bridge-base\(suffix)",
+        base: baseMetadata,
+        json: json
+    )
+    Benchmark("\(prefix)bridge_base_metadata", configuration: configuration) { benchmark in
         for _ in benchmark.scaledIterations {
             withBaseMetadata.info("req")
         }
@@ -68,8 +86,12 @@ func bridgeBenchmarks(configuration: Benchmark.Configuration) {
 
     // One base field and one field passed at each log call.
     let baseContext: Logger.Metadata = ["ctx": "\(1, sensitivity: .public)"]
-    let withBaseAndEmission = makeBridgeLogger(category: "bridge-both", base: baseContext)
-    Benchmark("bridge_base_and_emission_metadata", configuration: configuration) { benchmark in
+    let withBaseAndEmission = makeBridgeLogger(
+        category: "bridge-both\(suffix)",
+        base: baseContext,
+        json: json
+    )
+    Benchmark("\(prefix)bridge_base_and_emission_metadata", configuration: configuration) { benchmark in
         for _ in benchmark.scaledIterations {
             withBaseAndEmission.info("req", metadata: ["id": "\(42, sensitivity: .public)"])
         }
@@ -80,8 +102,12 @@ func bridgeBenchmarks(configuration: Benchmark.Configuration) {
     for i in 0..<24 {
         largeBase["ctx-\(i)"] = "\("value-\(i)", sensitivity: .public)"
     }
-    let withLargeBase = makeBridgeLogger(category: "bridge-large-base", base: largeBase)
-    Benchmark("bridge_large_base_and_emission_metadata", configuration: configuration) { benchmark in
+    let withLargeBase = makeBridgeLogger(
+        category: "bridge-large-base\(suffix)",
+        base: largeBase,
+        json: json
+    )
+    Benchmark("\(prefix)bridge_large_base_and_emission_metadata", configuration: configuration) { benchmark in
         for _ in benchmark.scaledIterations {
             withLargeBase.info("req", metadata: ["id": "\(42, sensitivity: .public)"])
         }
@@ -92,8 +118,8 @@ func bridgeBenchmarks(configuration: Benchmark.Configuration) {
     // includes the scope setup. One iteration is expensive, so this benchmark does not use the scaling factor.
     var unscaledConfiguration = configuration
     unscaledConfiguration.scalingFactor = .one
-    let scopeLogger = makeBridgeLogger(category: "bridge-scope")
-    Benchmark("bridge_scope_large_base_multiple_emissions", configuration: unscaledConfiguration) { _ in
+    let scopeLogger = makeBridgeLogger(category: "bridge-scope\(suffix)", json: json)
+    Benchmark("\(prefix)bridge_scope_large_base_multiple_emissions", configuration: unscaledConfiguration) { _ in
         withLogger(scopeLogger) { _ in
             withLogger(mergingMetadata: largeBase) { logger in
                 for _ in 0..<10 {
