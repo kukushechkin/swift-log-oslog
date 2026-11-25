@@ -18,12 +18,23 @@ public import Logging
 @usableFromInline
 package enum KeyValueFragmentWriter: MetadataFragmentWriter {
     @usableFromInline
-    package static var separator: String { " " }
+    package static var separator: StaticString { " " }
 
     @inlinable
-    package static func write(key: String, value: Logger.MetadataValue, to fragment: inout String) {
-        fragment.append(key)
-        fragment.append("=")
-        fragment.append(value.description)
+    package static func prepared(_ value: Logger.MetadataValue) -> Logger.MetadataValue {
+        if case .string = value { return value }
+        return .string(value.description)
+    }
+
+    @inlinable
+    package static func size(key: String, value: Logger.MetadataValue) -> Int {
+        key.utf8.count + 1 + value.description.utf8.count
+    }
+
+    @inlinable
+    package static func write(key: String, value: Logger.MetadataValue, to cursor: inout FragmentCursor) {
+        cursor.append(key)
+        cursor.append(UInt8(ascii: "="))
+        cursor.append(value.description)
     }
 }

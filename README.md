@@ -4,6 +4,11 @@ A [`swift-log`](https://github.com/apple/swift-log) backend implementation for D
 
 ## What it provides
 
+### `OSLogHandler`
+
+- `OSLogHandler` — a `LogHandler` that writes to the Darwin unified logging system and maps `Sensitivity` to the OSLog
+  privacy model. It writes the metadata as `key=value` pairs, or as JSON objects with the `.json` metadata format.
+
 ### `SensitivityAttribute`
 
 - `Sensitivity` — a two-case attribute (`.sensitive`, `.public`) that conforms to
@@ -47,3 +52,29 @@ redactingLogger.info("Hello, world", metadata: [
 
 In a development build, install `StreamLogHandler.standardOutput(label:)` directly, without wrapping it in a
 `RedactionLogHandler`, to forward sensitive values unchanged.
+
+### JSON metadata
+
+With the `.json` metadata format, `OSLogHandler` writes the public metadata and the sensitive metadata as one JSON
+object each. A program that reads the log back through `OSLogStore` gets the message and each object as separate
+components and parses them with a JSON parser. See `Examples/OSLogJSONRoundTrip` for the round trip.
+
+```swift
+import Logging
+import OSLogHandler
+import SensitivityAttribute
+
+let logger = Logger(label: "auth") { label in
+    OSLogHandler(subsystem: "com.example.myapp", category: label, metadataFormat: .json)
+}
+
+logger.info("Login successful", metadata: [
+    "user.id": "\("12345", sensitivity: .sensitive)",
+    "action": "\("password", sensitivity: .public)",
+])
+
+// A reader with access to private data sees:
+// Login successful public={"action":"password"} sensitive={"user.id":"12345"}
+// Any other reader sees:
+// Login successful public={"action":"password"} sensitive=<private>
+```

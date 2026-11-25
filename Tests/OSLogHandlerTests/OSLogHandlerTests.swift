@@ -126,8 +126,8 @@ struct OSLogHandlerTests {
         #expect(emission["error.type"]?.description.hasSuffix("SampleError") == true)
 
         // Untagged error fields stay private under deny-by-default.
-        let (publicString, _) = PartitionedMetadata<KeyValueFragmentWriter>.partition(emission)
-        #expect(publicString.isEmpty)
+        let (publicFragment, _) = PartitionedMetadata<KeyValueFragmentWriter>.partition(emission)
+        #expect(publicFragment.isEmpty)
     }
 
     @Test
@@ -150,6 +150,49 @@ struct OSLogHandlerTests {
         // The event's own error.message is kept. The injected one does not overwrite it.
         let emission = try #require(handler.emissionTimeMetadata(for: event))
         #expect(emission["error.message"]?.description == "custom")
+    }
+
+    // MARK: - Base metadata: split by sensitivity, cached, reconstructed
+
+    @Test
+    @available(macOS 11.0, iOS 14.0, tvOS 14.0, watchOS 7.0, *)
+    func baseMetadataSplitsBySensitivityAndReconstructs() {
+        var handler = OSLogHandler(subsystem: "test", category: "base")
+
+        // A fresh handler has empty halves and empty cached strings.
+        #expect(handler.base.publicBaseFragment.isEmpty)
+        #expect(handler.base.sensitiveBaseFragment.isEmpty)
+
+        handler.metadata = [
+            "method": .attributed("GET", attributes: [Sensitivity.public]),
+            "client_ip": "203.0.113.5",  // untagged, so private
+        ]
+
+        // Split by sensitivity into the two halves.
+        #expect(handler.base.publicBase["method"]?.description == "GET")
+        #expect(handler.base.sensitiveBase["client_ip"]?.description == "203.0.113.5")
+        #expect(handler.base.publicBase["client_ip"] == nil)
+        #expect(handler.base.sensitiveBase["method"] == nil)
+
+        // Cached strings match a flatten of each half.
+        #expect(handler.base.publicBaseFragment == "method=GET")
+        #expect(handler.base.sensitiveBaseFragment == "client_ip=203.0.113.5")
+
+        // The getter reconstructs the whole dictionary from the two halves.
+        #expect(handler.metadata["method"]?.description == "GET")
+        #expect(handler.metadata["client_ip"]?.description == "203.0.113.5")
+        #expect(handler.metadata.count == 2)
+
+        // The subscript routes to the correct half and keeps the cached string in sync.
+        handler[metadataKey: "user_id"] = .attributed("u-1", attributes: [Sensitivity.sensitive])
+        #expect(handler.base.sensitiveBase["user_id"]?.description == "u-1")
+        #expect(handler.base.sensitiveBaseFragment == "client_ip=203.0.113.5 user_id=u-1")
+
+        // Value semantics: a copy updates its own halves independently.
+        var copy = handler
+        copy[metadataKey: "method"] = nil
+        #expect(handler.base.publicBaseFragment == "method=GET")
+        #expect(copy.base.publicBaseFragment.isEmpty)
     }
 
     // MARK: - Value semantics (LogHandler requirement)
