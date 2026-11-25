@@ -8,7 +8,8 @@ For non-trivial changes that affect the public API, the Swift Log OSLog project 
 [Swift Evolution](https://github.com/apple/swift-evolution/blob/main/process.md) process.
 
 The process covers the whole `swift-log-oslog` package. This includes the `OSLogHandler` target and the
-`SensitivityAttribute` target. The `SensitivityAttribute` target contains `Sensitivity` and `RedactionLogHandler`.
+`SensitivityAttribute` target. The `SensitivityAttribute` target contains `Sensitivity`, `RedactionLogHandler`, and the
+`package` code that `OSLogHandler` uses to split and cache metadata.
 
 Writing a proposal first helps discuss multiple possible solutions early, apply useful feedback from other
 contributors, and avoid reimplementing the same feature multiple times.
@@ -49,3 +50,7 @@ If you have any questions, ask in an issue on GitHub.
 ### Proposal template
 
 - <doc:SLGO-NNNN>
+
+### Feature proposals
+
+- <doc:SLGO-0001-json-metadata-format>
