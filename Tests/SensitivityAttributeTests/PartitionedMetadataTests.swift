@@ -24,7 +24,7 @@ struct PartitionedMetadataTests {
 
     @Test
     func partitionKeepsOnlyExplicitlyPublicValuesPublic() {
-        let (publicString, privateString) = PartitionedMetadata.partition([
+        let (publicString, privateString) = PartitionedMetadata<KeyValueFragmentWriter>.partition([
             "method": .attributed("GET", attributes: [Sensitivity.public]),
             "user_id": .attributed("u-123", attributes: [Sensitivity.sensitive]),
             "client_ip": "203.0.113.5",  // untagged, so private
@@ -37,7 +37,7 @@ struct PartitionedMetadataTests {
 
     @Test
     func partitionSortsEachSideByKey() {
-        let (publicString, privateString) = PartitionedMetadata.partition([
+        let (publicString, privateString) = PartitionedMetadata<KeyValueFragmentWriter>.partition([
             "b": .attributed("2", attributes: [Sensitivity.public]),
             "a": .attributed("1", attributes: [Sensitivity.public]),
             "z": .attributed("26", attributes: [Sensitivity.sensitive]),
@@ -50,7 +50,7 @@ struct PartitionedMetadataTests {
 
     @Test
     func partitionRoutesAllToPrivateWhenNothingIsPublic() {
-        let (publicString, privateString) = PartitionedMetadata.partition([
+        let (publicString, privateString) = PartitionedMetadata<KeyValueFragmentWriter>.partition([
             "a": "1",
             "b": .attributed("2", attributes: [Sensitivity.sensitive]),
         ])
@@ -63,7 +63,7 @@ struct PartitionedMetadataTests {
 
     @Test
     func overlapsBaseDetectsSharedKeys() {
-        var base = PartitionedMetadata()
+        var base = PartitionedMetadata<KeyValueFragmentWriter>()
         base.metadata = [
             "a": "base_a",  // private side
             "b": .attributed("base_b", attributes: [Sensitivity.public]),  // public side
@@ -79,7 +79,7 @@ struct PartitionedMetadataTests {
 
     @Test
     func baseMetadataSplitsBySensitivityAndReconstructs() {
-        var base = PartitionedMetadata()
+        var base = PartitionedMetadata<KeyValueFragmentWriter>()
 
         // A new value has empty halves and empty cached strings.
         #expect(base.publicBaseString.isEmpty)
@@ -121,8 +121,8 @@ struct PartitionedMetadataTests {
 
     @Test
     func appendingJoinsWithASpaceAndSkipsEmptySides() {
-        #expect(PartitionedMetadata.appending("b=2", to: "a=1") == "a=1 b=2")
-        #expect(PartitionedMetadata.appending("", to: "a=1") == "a=1")
-        #expect(PartitionedMetadata.appending("b=2", to: "") == "b=2")
+        #expect(PartitionedMetadata<KeyValueFragmentWriter>.appending("b=2", to: "a=1") == "a=1 b=2")
+        #expect(PartitionedMetadata<KeyValueFragmentWriter>.appending("", to: "a=1") == "a=1")
+        #expect(PartitionedMetadata<KeyValueFragmentWriter>.appending("b=2", to: "") == "b=2")
     }
 }

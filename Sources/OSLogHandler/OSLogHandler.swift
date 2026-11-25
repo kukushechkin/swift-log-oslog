@@ -50,7 +50,7 @@ public struct OSLogHandler: LogHandler {
     internal let osLog: OSLog
 
     /// The base metadata, split by ``Sensitivity`` ahead of time with the `key=value` text of each half cached.
-    @usableFromInline package var base = PartitionedMetadata()
+    @usableFromInline package var base = PartitionedMetadata<KeyValueFragmentWriter>()
 
     /// Base metadata as one dictionary.
     ///
@@ -113,13 +113,19 @@ public struct OSLogHandler: LogHandler {
                 var merged = self.base.publicBaseMetadata
                 merged.merge(self.base.privateBaseMetadata) { keep, _ in keep }
                 merged.merge(emission) { _, emitted in emitted }
-                (publicString, privateString) = PartitionedMetadata.partition(merged)
+                (publicString, privateString) = PartitionedMetadata<KeyValueFragmentWriter>.partition(merged)
             } else {
                 // Common: no collision. Partition just the emission-time metadata and append to the cached
                 // base.
-                let (emittedPublic, emittedPrivate) = PartitionedMetadata.partition(emission)
-                publicString = PartitionedMetadata.appending(emittedPublic, to: self.base.publicBaseString)
-                privateString = PartitionedMetadata.appending(emittedPrivate, to: self.base.privateBaseString)
+                let (emittedPublic, emittedPrivate) = PartitionedMetadata<KeyValueFragmentWriter>.partition(emission)
+                publicString = PartitionedMetadata<KeyValueFragmentWriter>.appending(
+                    emittedPublic,
+                    to: self.base.publicBaseString
+                )
+                privateString = PartitionedMetadata<KeyValueFragmentWriter>.appending(
+                    emittedPrivate,
+                    to: self.base.privateBaseString
+                )
             }
         } else {
             // No emission-time metadata: use the cached base partition directly.

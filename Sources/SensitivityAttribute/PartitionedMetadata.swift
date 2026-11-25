@@ -14,25 +14,47 @@
 
 public import Logging
 
-/// Base metadata split by ``Sensitivity``, with a cached `key=value` text for each half.
-///
-/// The split happens once, when the base metadata changes. A log call then reuses the cached text.
+/// Writes metadata entries as text, so that ``PartitionedMetadata`` can cache the text of the base metadata.
 @usableFromInline
-package struct PartitionedMetadata: Sendable {
+package protocol MetadataFragmentWriter {
+    /// The text between two entries.
+    static var separator: String { get }
+
+    /// Whether the value belongs to the public half. The default reads the ``Sensitivity`` of the value.
+    static func isPublic(_ value: Logger.MetadataValue) -> Bool
+
+    /// Appends the text of one entry to `fragment`.
+    static func write(key: String, value: Logger.MetadataValue, to fragment: inout String)
+}
+
+extension MetadataFragmentWriter {
+    @inlinable
+    package static func isPublic(_ value: Logger.MetadataValue) -> Bool {
+        value.attributes[Sensitivity.self] == .public
+    }
+}
+
+/// Base metadata split by ``Sensitivity``, with a cached text for each half.
+///
+/// The split happens once, when the base metadata changes. A log call then reuses the cached text. The `Writer`
+/// decides how the text of an entry looks.
+@usableFromInline
+package struct PartitionedMetadata<Writer: MetadataFragmentWriter>: Sendable {
     /// ``Sensitivity/public`` entries. Everything else is in ``privateBaseMetadata``.
     @usableFromInline package var publicBaseMetadata: Logger.Metadata = [:]
     @usableFromInline package var privateBaseMetadata: Logger.Metadata = [:]
 
-    /// The `key=value` text of each half. It changes only when the base metadata changes.
+    /// The text of each half. It changes only when the base metadata changes.
     @usableFromInline package var publicBaseString: String = ""
     @usableFromInline package var privateBaseString: String = ""
 
-    @usableFromInline
+    @inlinable
     package init() {}
 
     /// The base metadata as one dictionary.
     ///
     /// The setter splits the new value again and flattens both halves.
+    @inlinable
     package var metadata: Logger.Metadata {
         get {
             if self.privateBaseMetadata.isEmpty { return self.publicBaseMetadata }
@@ -43,7 +65,7 @@ package struct PartitionedMetadata: Sendable {
             self.publicBaseMetadata = [:]
             self.privateBaseMetadata = [:]
             for (key, value) in newValue {
-                if value.attributes[Sensitivity.self] == .public {
+                if Writer.isPublic(value) {
                     self.publicBaseMetadata[key] = value
                 } else {
                     self.privateBaseMetadata[key] = value
@@ -58,13 +80,14 @@ package struct PartitionedMetadata: Sendable {
     ///
     /// A read checks both halves. A write puts the new value into a half based on its ``Sensitivity``. Setting
     /// `nil` removes the key from both halves.
+    @inlinable
     package subscript(key: String) -> Logger.Metadata.Value? {
         get { self.publicBaseMetadata[key] ?? self.privateBaseMetadata[key] }
         set {
             self.publicBaseMetadata[key] = nil
             self.privateBaseMetadata[key] = nil
             if let newValue {
-                if newValue.attributes[Sensitivity.self] == .public {
+                if Writer.isPublic(newValue) {
                     self.publicBaseMetadata[key] = newValue
                 } else {
                     self.privateBaseMetadata[key] = newValue
@@ -77,7 +100,7 @@ package struct PartitionedMetadata: Sendable {
 
     /// Whether an emission-time key also names a base entry. Appending would duplicate that key in this
     /// case.
-    @usableFromInline
+    @inlinable
     package func overlapsBase(_ emission: Logger.Metadata) -> Bool {
         for key in emission.keys where self.publicBaseMetadata[key] != nil || self.privateBaseMetadata[key] != nil {
             return true
@@ -85,47 +108,41 @@ package struct PartitionedMetadata: Sendable {
         return false
     }
 
-    /// Flattens already-split metadata into a sorted `key=value` string.
+    /// Flattens already-split metadata into a sorted text.
+    @inlinable
     package static func flatten(_ metadata: Logger.Metadata) -> String {
         var result = ""
         result.reserveCapacity(metadata.keys.reduce(0) { $0 + $1.utf8.count + 2 } + metadata.count)
         for (key, value) in metadata.sorted(by: { $0.key < $1.key }) {
-            if !result.isEmpty { result.append(" ") }
-            result.append(key)
-            result.append("=")
-            result.append(value.description)
+            if !result.isEmpty { result.append(Writer.separator) }
+            Writer.write(key: key, value: value, to: &result)
         }
         return result
     }
 
-    /// Appends `field` to `base`, separated by a space. Skips the copy when either side is empty.
-    @usableFromInline
+    /// Appends `field` to `base`, separated by the separator of the writer. Skips the copy when either side is empty.
+    @inlinable
     package static func appending(_ field: String, to base: String) -> String {
         if field.isEmpty { return base }
         if base.isEmpty { return field }
-        return base + " " + field
+        return base + Writer.separator + field
     }
 
-    /// Splits metadata into sorted public/private `key=value` strings in one pass. Denies by default: only
+    /// Splits metadata into sorted public/private texts in one pass. Denies by default: only
     /// ``Sensitivity/public`` goes to the public string.
-    @usableFromInline
+    @inlinable
     package static func partition(
         _ metadata: Logger.Metadata
     ) -> (publicString: String, privateString: String) {
         var publicString = ""
         var privateString = ""
         for (key, value) in metadata.sorted(by: { $0.key < $1.key }) {
-            let isPublic = value.attributes[Sensitivity.self] == .public
-            if isPublic {
-                if !publicString.isEmpty { publicString.append(" ") }
-                publicString.append(key)
-                publicString.append("=")
-                publicString.append(value.description)
+            if Writer.isPublic(value) {
+                if !publicString.isEmpty { publicString.append(Writer.separator) }
+                Writer.write(key: key, value: value, to: &publicString)
             } else {
-                if !privateString.isEmpty { privateString.append(" ") }
-                privateString.append(key)
-                privateString.append("=")
-                privateString.append(value.description)
+                if !privateString.isEmpty { privateString.append(Writer.separator) }
+                Writer.write(key: key, value: value, to: &privateString)
             }
         }
         return (publicString, privateString)

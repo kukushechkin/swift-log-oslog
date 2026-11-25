@@ -126,7 +126,7 @@ struct OSLogHandlerTests {
         #expect(emission["error.type"]?.description.hasSuffix("SampleError") == true)
 
         // Untagged error fields stay private under deny-by-default.
-        let (publicString, _) = PartitionedMetadata.partition(emission)
+        let (publicString, _) = PartitionedMetadata<KeyValueFragmentWriter>.partition(emission)
         #expect(publicString.isEmpty)
     }
 
